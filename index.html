@@ -112,6 +112,10 @@
 
       <label>Custom function body <span style="opacity:.7">(exactly as in the HE editor — no <code>function()</code> wrapper)</span></label>
       <textarea id="code" spellcheck="false"></textarea>
+      <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
+        <input type="checkbox" id="autoformat" checked style="width:auto;margin:0">
+        auto-format as soon as the code is valid <span style="opacity:.6">— draft kept in localStorage for 1&nbsp;h after your last change</span>
+      </label>
 
       <h2 style="margin-top:18px">Sample request</h2>
       <label>URL</label>
@@ -344,28 +348,326 @@
     }
   };
 
-  // ---- persistence / sharing ----
-  const save = () => { try { localStorage.setItem('he-debug', JSON.stringify(getCfg())); } catch {} };
+  // ---- persistence: draft kept for 1 h after the last change / sharing ----
+  const TTL = 3600 * 1000;
+  const save = () => { try { localStorage.setItem('he-debug', JSON.stringify({ t: Date.now(), cfg: getCfg() })); } catch {} };
   const load = () => {
     if (location.hash.length > 1) {
       try { setCfg(JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(1)))))); return; } catch {}
     }
     try {
-      const saved = localStorage.getItem('he-debug');
-      if (saved) { setCfg(JSON.parse(saved)); return; }
-    } catch {}
+      const raw = localStorage.getItem('he-debug');
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (s && s.cfg && Date.now() - s.t < TTL) { setCfg(s.cfg); return; }
+      }
+      localStorage.removeItem('he-debug'); // expired, old format, or corrupted
+    } catch { try { localStorage.removeItem('he-debug'); } catch {} }
     setCfg(DEFAULTS);
+  };
+
+  // ---- auto-format: dependency-free mini formatter (only applied to code that already parses) ----
+  const KW = new Set(('var let const function return if else for while do switch case default break continue ' +
+    'new typeof instanceof in of void delete throw try catch finally await yield this').split(' '));
+  const BIN = new Set(['=', '==', '===', '!=', '!==', '<', '<=', '>', '>=', '+', '-', '*', '/', '%', '&', '|', '^',
+    '<<', '>>', '>>>', '&&', '||', '??', '**', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '**=', '<<=', '>>=',
+    '>>>=', '&&=', '||=', '??=', '=>']);
+  const P3 = ['>>>=', '...', '===', '!==', '**=', '<<=', '>>=', '>>>', '&&=', '||=', '??='];
+  const P2 = ['=>', '==', '!=', '<=', '>=', '&&', '||', '??', '?.', '++', '--', '+=', '-=', '*=', '/=', '%=',
+    '&=', '|=', '^=', '**', '<<', '>>'];
+  const P1 = '{}()[];,<>+-*/%&|^!?:=.~';
+  // keywords after which a / starts a regex literal (everything else = division)
+  const RE_KW = new Set(['return', 'typeof', 'case', 'in', 'of', 'instanceof', 'new', 'void', 'delete', 'do',
+    'else', 'throw', 'await', 'yield']);
+
+  function tokenize(src) {
+    const toks = [];
+    let i = 0;
+    const lastSig = () => { for (let k = toks.length - 1; k >= 0; k--) if (toks[k].t !== 'lc' && toks[k].t !== 'bc') return toks[k]; return null; };
+    while (i < src.length) {
+      const c = src[i];
+      if (/\s/.test(c)) { i++; continue; }
+      if (c === '/' && src[i + 1] === '/') {
+        let j = src.indexOf('\n', i); if (j < 0) j = src.length;
+        toks.push({ t: 'lc', v: src.slice(i, j) }); i = j; continue;
+      }
+      if (c === '/' && src[i + 1] === '*') {
+        let j = src.indexOf('*/', i + 2); j = j < 0 ? src.length : j + 2;
+        toks.push({ t: 'bc', v: src.slice(i, j) }); i = j; continue;
+      }
+      if (c === '"' || c === "'" || c === '`') {
+        let j = i + 1;
+        while (j < src.length && src[j] !== c) { if (src[j] === '\\') j++; j++; }
+        toks.push({ t: c === '`' ? 'tpl' : 'str', v: src.slice(i, j + 1) }); i = j + 1; continue;
+      }
+      if (c === '/') {
+        const p = lastSig();
+        let afterVal = false;
+        if (p) {
+          if (['num', 'str', 'tpl', 're'].includes(p.t)) afterVal = true;
+          else if (p.t === 'id') afterVal = !RE_KW.has(p.v);
+          else if (p.t === 'punc') afterVal = [')', ']', '++', '--'].includes(p.v);
+        }
+        if (!p || !afterVal) {
+          let j = i + 1, cls = false, ok = false;
+          while (j < src.length) {
+            const ch = src[j];
+            if (ch === '\\') { j += 2; continue; }
+            if (ch === '\n') break;
+            if (ch === '[') cls = true;
+            else if (ch === ']') cls = false;
+            else if (ch === '/' && !cls) { ok = true; break; }
+            j++;
+          }
+          if (ok) {
+            let k = j + 1; while (k < src.length && /[a-z]/.test(src[k])) k++;
+            toks.push({ t: 're', v: src.slice(i, k) }); i = k; continue;
+          }
+        }
+      }
+      if (/[0-9]/.test(c) || (c === '.' && /[0-9]/.test(src[i + 1] || ''))) {
+        let j = i + 1;
+        while (j < src.length && (/[0-9a-zA-Z_.$]/.test(src[j]) || ((src[j] === '+' || src[j] === '-') && /[eE]/.test(src[j - 1])))) j++;
+        toks.push({ t: 'num', v: src.slice(i, j) }); i = j; continue;
+      }
+      if (/[A-Za-z_$]/.test(c)) {
+        let j = i + 1; while (j < src.length && /[A-Za-z0-9_$]/.test(src[j])) j++;
+        toks.push({ t: 'id', v: src.slice(i, j) }); i = j; continue;
+      }
+      let op = null;
+      for (const len of [3, 2, 1]) {
+        const seg = src.slice(i, i + len);
+        if (seg.length === len && ((len === 3 && P3.includes(seg)) || (len === 2 && P2.includes(seg)) || (len === 1 && P1.includes(seg)))) { op = seg; break; }
+      }
+      if (!op) return null; // unknown character: refuse to format
+      toks.push({ t: 'punc', v: op }); i += op.length;
+    }
+    return toks;
+  }
+
+  function printTokens(toks) {
+    const n = toks.length;
+    const prevSig = new Array(n).fill(-1), nextSig = new Array(n).fill(-1);
+    let last = -1;
+    for (let i = 0; i < n; i++) { prevSig[i] = last; if (toks[i].t !== 'lc' && toks[i].t !== 'bc') last = i; }
+    let nxt = -1;
+    for (let i = n - 1; i >= 0; i--) { nextSig[i] = nxt; if (toks[i].t !== 'lc' && toks[i].t !== 'bc') nxt = i; }
+    const tokAt = i => (i >= 0 && i < n) ? toks[i] : null;
+    const isKw = t => t && t.t === 'id' && KW.has(t.v);
+    const endsVal = t => t && (['num', 'str', 'tpl', 're'].includes(t.t)
+      || (t.t === 'id' && !isKw(t))
+      || (t.t === 'punc' && [')', ']', '++', '--'].includes(t.v)));
+    let line = '', depth = 0, paren = 0, tern = 0;
+    const lines = [];
+    const IND = '  ';
+    const braceStack = []; // 'block' | 'obj' for each open {
+    let doWhile = -1;      // paren depth while a do-while header is open
+    const needSpace = (a, b) => {
+      if (!a) return false;
+      if (b.t === 'bc') return true;
+      if (a.t === 'bc') return false; // block comments carry their own spacing
+      const av = a.v, bv = b.v;
+      if (bv === ')' || bv === ']' || bv === ',' || bv === ';' || bv === '.' || bv === '?.') return false;
+      if (av === '(' || av === '[' || av === '.' || av === '?.' || av === '{') return false;
+      if (av === ',' || av === ';') return false; // spacing already handled by their own rules
+      if (bv === '(') return isKw(a) || BIN.has(av);
+      if (bv === '[') return isKw(a);
+      if (bv === '{') return av !== '(' && av !== '.' && av !== '?.';
+      if (av === '}') return isKw(b) || BIN.has(bv) || bv === '{';
+      if (bv === '++' || bv === '--') return isKw(a);
+      if (av === '++' || av === '--') return false;
+      if (bv === '!' || bv === '~') return isKw(a) || BIN.has(av);
+      if (av === '!' || av === '~') return false;
+      if (av === '+' || av === '-') return !a.u;
+      if (bv === '+' || bv === '-') {
+        if (!b.u) return true; // binary
+        return isKw(a) || BIN.has(av) || av === '?' || av === ':'; // unary after = && ? :
+      }
+      if (av === ':') return true;
+      if (bv === ':') return tern > 0;
+      if (av === '?' || bv === '?') return true;
+      if (av === '=>' || bv === '=>') return true;
+      if (isKw(a) || isKw(b)) return true;
+      if (BIN.has(av) || BIN.has(bv)) return true;
+      return true;
+    };
+    for (let i = 0; i < n; i++) {
+      const t = toks[i], v = t.v;
+      const p = tokAt(prevSig[i]), nx = tokAt(nextSig[i]);
+      if (t.t === 'lc') {
+        if (line.trim()) line += ' ';
+        line += v;
+        lines.push(line.trimEnd());
+        line = IND.repeat(Math.max(0, depth));
+        continue;
+      }
+      if (t.t === 'bc') {
+        if (line.trim()) line += ' ';
+        line += v;
+        continue;
+      }
+      if (v === '+' || v === '-') t.u = !p || !endsVal(p);
+      if (v === '{') {
+        if (line.trim() && needSpace(p, t)) line += ' ';
+        line += '{';
+        if (nx && nx.t === 'punc' && nx.v === '}') { // empty {} — keep inline
+          i = nextSig[i];
+          line += ' }';
+          continue;
+        }
+        // block vs object literal (drives semicolons vs trailing commas)
+        let kind = 'block';
+        if (p) {
+          if (p.t === 'punc') {
+            if (![')', ';', '}', '{', '=>'].includes(p.v)) kind = 'obj'; // = ( [ , : ? && …
+          } else if (p.t === 'id') {
+            if (!['else', 'try', 'do', 'finally'].includes(p.v) && KW.has(p.v)) kind = 'obj'; // return { … }
+          }
+        }
+        braceStack.push(kind);
+        depth++;
+        if (paren === 0) { lines.push(line.trimEnd()); line = IND.repeat(depth); }
+        else line += ' '; // object literal inside a call stays inline
+        continue;
+      }
+      if (v === '}') {
+        const kind = braceStack.pop() || 'block';
+        depth--;
+        if (paren > 0) { line += ' }'; continue; }
+        if (line.trim()) {
+          const trimmed = line.trimEnd();
+          if (kind === 'obj') {
+            if (!/[,{]$/.test(trimmed)) line = trimmed + ','; // prettier-style trailing comma
+          } else if (!/[;{}:]$/.test(trimmed)) {
+            line = trimmed + ';'; // complete the statement
+          }
+          lines.push(line.trimEnd());
+        }
+        line = IND.repeat(Math.max(0, depth)) + '}';
+        if (nx && nx.t === 'punc' && nx.v === ';') {
+          line += ';';
+          i = nextSig[i];
+          lines.push(line);
+          line = IND.repeat(Math.max(0, depth));
+        } else if (nx && nx.t === 'id' && ['else', 'catch', 'finally'].includes(nx.v)) {
+          // } else / } catch / } finally — stay on the same line
+        } else if (nx && nx.t === 'id' && nx.v === 'while') {
+          doWhile = paren; // do-while: close the statement when the header ')' arrives
+        } else if (nx && nx.t === 'punc' && nx.v === ',' && braceStack.at(-1) === 'obj') {
+          line += ',';
+          i = nextSig[i];
+          lines.push(line);
+          line = IND.repeat(Math.max(0, depth));
+        } else {
+          lines.push(line);
+          line = IND.repeat(Math.max(0, depth));
+        }
+        continue;
+      }
+      if (v === '(' || v === '[') {
+        if (line.trim() && needSpace(p, t)) line += ' ';
+        line += v;
+        paren++;
+        continue;
+      }
+      if (v === ')' || v === ']') {
+        paren--;
+        line += v;
+        if (v === ')' && doWhile === paren && line.trim()) { // end of do-while header
+          if (!(nx && nx.t === 'punc' && nx.v === ';')) {
+            line = line.trimEnd() + ';';
+            lines.push(line);
+            line = IND.repeat(Math.max(0, depth));
+          }
+          doWhile = -1;
+        }
+        continue;
+      }
+      if (v === ';') {
+        line += ';';
+        if (paren > 0) { if (nx && nx.v !== ')' && nx.v !== ';') line += ' '; } // for(;;) header
+        else if (!(nx && nx.t === 'punc' && nx.v === ')')) {
+          lines.push(line.trimEnd());
+          line = IND.repeat(Math.max(0, depth));
+        }
+        continue;
+      }
+      if (v === ',') {
+        line += ',';
+        if (nx && nx.v !== ')' && nx.v !== ']' && nx.v !== '}') line += ' ';
+        if (paren === 0 && braceStack.at(-1) === 'obj' && nx && nx.v !== '}') { // multi-line object members
+          lines.push(line.trimEnd());
+          line = IND.repeat(depth);
+        }
+        continue;
+      }
+      if (v === '?') tern++;
+      if (v === ':') {
+        const isTern = tern > 0;
+        if (isTern) tern--;
+        if (line.trim() && (isTern || needSpace(p, t))) line += ' ';
+        line += ':';
+        continue;
+      }
+      if (line.trim() && needSpace(p, t)) line += ' ';
+      line += v;
+    }
+    if (line.trim()) {
+      const trimmed = line.trimEnd();
+      if (!/[;{}:]$/.test(trimmed)) line = trimmed + ';';
+      lines.push(line.trimEnd());
+    }
+    return lines.join('\n');
+  }
+
+  function formatJS(src) {
+    try {
+      const toks = tokenize(src);
+      if (!toks || toks.length === 0) return null;
+      return printTokens(toks);
+    } catch { return null; }
+  }
+
+  const autoFormat = () => {
+    const ta = $('#code');
+    const src = ta.value;
+    if (!src.trim()) return;
+    try { new Function('val', 'detail', 'util', src); } catch { return; } // only format code that already parses
+    const out = formatJS(src);
+    if (!out || out === src) return;
+    try { new Function('val', 'detail', 'util', out); } catch { return; } // never replace code with something broken
+    // keep the caret at (roughly) the same position, by non-whitespace offset
+    const strip = s => s.replace(/\s+/g, '');
+    const want = strip(src.slice(0, ta.selectionStart)).length;
+    let pos = out.length, seen = 0;
+    for (let k = 0; k < out.length; k++) {
+      if (/\s/.test(out[k])) continue;
+      if (seen >= want) { pos = k; break; }
+      seen++;
+    }
+    const scroll = ta.scrollTop;
+    ta.value = out;
+    ta.setSelectionRange(pos, pos);
+    ta.scrollTop = scroll;
   };
 
   // ---- wire up ----
   load();
+  $('#autoformat').checked = (localStorage.getItem('he-debug-af') ?? '1') !== '0';
   $('#preset').addEventListener('change', e => {
-    if (PRESETS[e.target.value]) { setCfg(PRESETS[e.target.value]); run(); }
+    if (PRESETS[e.target.value]) { setCfg(PRESETS[e.target.value]); save(); run(); }
     e.target.value = '';
   });
   document.querySelector('.card').addEventListener('input', () => {
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => { save(); run(); }, 500);
+    debounceTimer = setTimeout(() => {
+      if ($('#autoformat').checked) autoFormat();
+      save();
+      run();
+    }, 500);
+  });
+  $('#autoformat').addEventListener('change', () => {
+    try { localStorage.setItem('he-debug-af', $('#autoformat').checked ? '1' : '0'); } catch {}
   });
   $('#run').addEventListener('click', () => { save(); run(); });
   $('#reset').addEventListener('click', () => {
@@ -394,6 +696,7 @@
     try { document.execCommand('copy'); ok(); } catch { window.prompt('Copy this link:', text); }
     ta.remove();
   }
+  if ($('#autoformat').checked) autoFormat();
   run();
 })();
 </script>

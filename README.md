@@ -15,6 +15,8 @@ Header Editor's built-in rule Test panel checks whether a rule matches a URL, bu
 - Shows the filter regex's capture groups (informational — the extension does not pass them to the function)
 - Header diff (`+` added / `~` modified / `−` removed), redirect result, `_header_editor_cancel_` handling
 - `console.log()` output from your function captured on the page
+- Auto-format the function body as soon as it parses (dependency-free formatter — toggle under the editor; regex literals, strings and comments are preserved verbatim)
+- Draft auto-saved to localStorage and kept for **1 hour after your last change** — refresh without losing anything
 - Syntax and runtime error reporting
 - Presets, localStorage persistence, shareable links (config in the URL hash)
 - Zero dependencies, zero network calls — everything runs client-side
