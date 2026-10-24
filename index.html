@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Header Editor — Custom Function Debugger</title>
+<meta name="description" content="Test Header Editor custom functions against a sample URL, entirely in your browser.">
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #0f1115; --panel: #161a22; --panel2: #1c212c; --border: #2a3040;
+    --text: #e2e6ee; --muted: #8b93a5; --accent: #4ade80; --accent-dim: #173625;
+    --red: #f87171; --red-dim: #3b1719; --yellow: #fbbf24; --blue: #60a5fa;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1150px; padding: 24px 20px 60px; }
+  header h1 { font-size: 22px; margin: 0 0 4px; }
+  header h1 .he { color: var(--accent); }
+  header p { margin: 0 0 2px; color: var(--muted); font-size: 13.5px; }
+  header code, .tooltip-note code { background: var(--panel2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-family: var(--mono); font-size: 12.5px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 20px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 12px; }
+  label { display: block; font-size: 12.5px; color: var(--muted); margin: 10px 0 4px; }
+  label:first-of-type { margin-top: 0; }
+  input[type=text], select, textarea {
+    width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 10px; font-size: 14px; font-family: var(--mono); outline: none;
+  }
+  input[type=text]:focus, select:focus, textarea:focus { border-color: var(--accent); }
+  textarea { resize: vertical; }
+  #code { min-height: 230px; font-size: 13px; line-height: 1.5; tab-size: 2; }
+  #headers { min-height: 96px; font-size: 13px; }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; min-width: 0; }
+  .btnrow { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  button {
+    background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent);
+    border-radius: 6px; padding: 7px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--muted); border-color: var(--border); font-weight: 400; }
+  button:hover { filter: brightness(1.2); }
+  .badge { display: inline-block; border-radius: 6px; padding: 4px 12px; font-weight: 700; font-size: 13.5px; }
+  .badge.ok { background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent); }
+  .badge.no { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+  .badge.skip { background: #3a3113; color: var(--yellow); border: 1px solid var(--yellow); }
+  .groups { margin: 10px 0 0; font-family: var(--mono); font-size: 13px; color: var(--blue); word-break: break-all; }
+  .tooltip-note { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-family: var(--mono); font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 400; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 5px 8px; border-bottom: 1px solid var(--border); word-break: break-all; }
+  tr.add td { color: var(--accent); }
+  tr.mod td.old { color: var(--muted); text-decoration: line-through; }
+  tr.mod td.new { color: var(--yellow); }
+  tr.del td { color: var(--red); text-decoration: line-through; }
+  .arrow { color: var(--muted); }
+  #console { background: #0a0c10; border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-family: var(--mono); font-size: 12.5px; min-height: 60px; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+  #console .l-log { color: var(--text); } #console .l-warn { color: var(--yellow); }
+  #console .l-error { color: var(--red); } #console .l-info { color: var(--blue); }
+  #console .empty { color: var(--muted); font-style: italic; }
+  .redirect-result { font-family: var(--mono); font-size: 14px; margin-top: 10px; word-break: break-all; }
+  .redirect-result.ok { color: var(--accent); }
+  .redirect-result.cancel { color: var(--red); font-weight: 700; }
+  .redirect-result.same { color: var(--muted); }
+  .err { background: var(--red-dim); border: 1px solid var(--red); color: var(--red); border-radius: 6px; padding: 8px 12px; margin-top: 10px; font-family: var(--mono); font-size: 13px; white-space: pre-wrap; word-break: break-all; }
+  footer { margin-top: 26px; color: var(--muted); font-size: 12.5px; }
+  footer a { color: var(--blue); text-decoration: none; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="he">Header Editor</span> — Custom Function Debugger</h1>
+    <p>Test a custom function against a sample URL with the exact invocation the extension uses:
+    <code>new Function('val', 'detail', 'util', code)</code></p>
+    <p>All code runs locally in your browser — nothing is sent anywhere.</p>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Rule</h2>
+      <label>Example presets</label>
+      <select id="preset">
+        <option value="">— load a preset —</option>
+        <option value="host">Host header from www subdomain (header rule)</option>
+        <option value="redirect">www → apex domain (redirect rule)</option>
+      </select>
+      <div class="row">
+        <div>
+          <label>Rule type</label>
+          <select id="ruleType">
+            <option value="modifySendHeader">Modify request header</option>
+            <option value="modifyReceiveHeader">Modify response header</option>
+            <option value="redirect">Redirect request</option>
+            <option value="cancel">Cancel request</option>
+          </select>
+        </div>
+        <div>
+          <label>Match — Regular expression</label>
+          <input type="text" id="matchRegex" spellcheck="false">
+        </div>
+      </div>
+      <label>Exclude — Regular expression (optional)</label>
+      <input type="text" id="excludeRegex" spellcheck="false">
+
+      <label>Custom function body <span style="opacity:.7">(exactly as in the HE editor — no <code>function()</code> wrapper)</span></label>
+      <textarea id="code" spellcheck="false"></textarea>
+
+      <h2 style="margin-top:18px">Sample request</h2>
+      <label>URL</label>
+      <input type="text" id="url" spellcheck="false">
+      <div class="row">
+        <div>
+          <label>Method</label>
+          <input type="text" id="method" value="GET" spellcheck="false">
+        </div>
+        <div>
+          <label>Resource type</label>
+          <select id="rtype">
+            <option>main_frame</option><option>sub_frame</option><option>xmlhttprequest</option>
+            <option>image</option><option>script</option><option>stylesheet</option>
+            <option>media</option><option>websocket</option><option>other</option>
+          </select>
+        </div>
+      </div>
+      <label>Initial headers <span style="opacity:.7">(one per line, <code>name: value</code>)</span></label>
+      <textarea id="headers" spellcheck="false"></textarea>
+
+      <div class="btnrow">
+        <button id="run">Run</button>
+        <button id="share" class="ghost">Copy shareable link</button>
+        <button id="reset" class="ghost">Reset</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Result</h2>
+      <div id="matchBadge"></div>
+      <div id="groups" class="groups"></div>
+      <div id="errBox"></div>
+      <div id="redirectOut" class="redirect-result hidden"></div>
+      <div id="headersOut"></div>
+
+      <h2 style="margin-top:18px">console output</h2>
+      <div id="console"><span class="empty">console.log() from your function appears here</span></div>
+
+      <p class="tooltip-note">Notes: the rule's match regex is only a filter in Header Editor —
+      capture groups are <b>not</b> passed to the function. Re-run the regex inside it against
+      <code>detail.url</code> (or <code>val</code> for redirect rules, where <code>val</code> is the URL).
+      Header rule: <code>val</code> is the <code>[{name, value}]</code> array, mutate it in place.
+      Redirect/cancel rule: return the new URL string, or <code>'_header_editor_cancel_'</code> to cancel.</p>
+    </div>
+  </div>
+
+  <footer>
+    Simulates <a href="https://github.com/FirefoxBar/HeaderEditor" target="_blank" rel="noopener">Header Editor</a>
+    (Full version) custom-function execution: same signature and argument shapes as
+    <code>src/share/core/rule-utils.ts</code> / <code>web-request-handler.ts</code>.
+    <code>util</code> here is a minimal stub — the extension ships lodash plus base64/text codecs (5.4.2+).
+  </footer>
+</div>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const DEFAULTS = {
+    ruleType: 'modifySendHeader',
+    matchRegex: '^https://www\\.google\\.com',
+    excludeRegex: '',
+    code: 'const m = detail.url.match(/^https?:\\/\\/www\\.([^\\/:?#]+)/);\nif (m) {\n  const h = val.find(x => x.name.toLowerCase() === \'host\');\n  if (h) { h.value = m[1]; }\n  else { val.push({ name: \'Host\', value: String(m[1]) }); }\n}',
+    url: 'https://www.google.com/search?q=test',
+    method: 'GET',
+    rtype: 'main_frame',
+    headers: 'Host: www.google.com\nUser-Agent: Mozilla/5.0 (X11; Linux x86_64)\nAccept: */*\nAccept-Language: en-US,en;q=0.9,it;q=0.8',
+  };
+  const PRESETS = {
+    host: DEFAULTS,
+    redirect: {
+      ...DEFAULTS,
+      ruleType: 'redirect',
+      matchRegex: '^https://www\\.[a-z0-9.-]+',
+      code: 'const m = val.match(/^(https?):\\/\\/www\\.([^\\/:?#]+)/);\nif (m) return m[1] + \'://\' + m[2];',
+      url: 'https://www.google.com/some/path',
+    },
+  };
+
+  const FIELDS = ['ruleType', 'matchRegex', 'excludeRegex', 'code', 'url', 'method', 'rtype', 'headers'];
+  const getCfg = () => Object.fromEntries(FIELDS.map(f => [f, $('#' + f).value]));
+  const setCfg = c => FIELDS.forEach(f => { $('#' + f).value = c[f] ?? DEFAULTS[f]; });
+
+  // ---- util stub (extension ships lodash + codecs since 5.4.2) ----
+  const getPath = (o, p) =>
+    String(p).split(/[.[\]]+/).filter(Boolean).reduce((a, k) => (a == null ? a : a[k]), o);
+  const util = {
+    _: {
+      get: getPath,
+      has: (o, p) => getPath(o, p) !== undefined,
+      set: (o, p, v) => { const ks = String(p).split(/[.[\]]+/).filter(Boolean); let c = o;
+        for (let i = 0; i < ks.length - 1; i++) c = c[ks[i]] ??= {}; c[ks.at(-1)] = v; return o; },
+      first: a => a?.[0], last: a => a?.[a?.length - 1], head: a => a?.[0],
+      flatten: a => a.flat(), uniq: a => [...new Set(a)],
+      clone: o => structuredClone(o), cloneDeep: o => structuredClone(o),
+      pick: (o, ks) => Object.fromEntries(ks.map(k => [k, o[k]])),
+      eq: (a, b) => a === b,
+      isEqual: (a, b) => JSON.stringify(a) === JSON.stringify(b),
+    },
+    atob: (enc, b64) => new TextDecoder(enc).decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0))),
+    btoa: s => btoa(String.fromCharCode(...new TextEncoder().encode(s))),
+  };
+
+  const parseHeaders = text => text.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const i = l.indexOf(':');
+    return i === -1 ? { name: l, value: '' } : { name: l.slice(0, i).trim(), value: l.slice(i + 1).trim() };
+  });
+
+  const buildDetail = c => ({
+    id: 1, url: c.url, tab: 1, method: c.method, frame: 0, parentFrame: -1,
+    proxy: null, type: c.rtype, time: Date.now(), originUrl: '', documentUrl: '',
+    incognito: false, cookieStoreId: undefined, requestHeaders: null, responseHeaders: null,
+    browser: 'chrome',
+  });
+
+  const fmt = v => {
+    if (typeof v === 'string') return v;
+    if (v instanceof Error) return v.message;
+    try { return JSON.stringify(v); } catch { return String(v); }
+  };
+
+  let debounceTimer;
+  const run = () => {
+    const c = getCfg();
+    const badge = $('#matchBadge'), groups = $('#groups'), errBox = $('#errBox'),
+          headersOut = $('#headersOut'), redirectOut = $('#redirectOut'), consoleEl = $('#console');
+    groups.textContent = ''; errBox.innerHTML = ''; headersOut.innerHTML = '';
+    redirectOut.classList.add('hidden');
+    consoleEl.innerHTML = '<span class="empty">console.log() from your function appears here</span>';
+
+    // console capture (functions are synchronous in HE)
+    const logs = [];
+    const realConsole = console;
+    const fakeConsole = {};
+    ['log', 'warn', 'error', 'info'].forEach(k => {
+      fakeConsole[k] = (...args) => {
+        logs.push({ level: k, text: args.map(fmt).join(' ') });
+        realConsole[k](...args);
+      };
+    });
+
+    const showError = msg => { errBox.innerHTML = '<div class="err">' + msg.replace(/</g, '&lt;') + '</div>'; };
+
+    // 1. match filter — same logic as isMatchUrl(): RegExp with g flag, lastIndex reset
+    let matched = true, excluded = false;
+    if (c.matchRegex) {
+      let reg;
+      try { reg = new RegExp(c.matchRegex, 'g'); }
+      catch (e) { showError('Invalid match regex: ' + e.message); return; }
+      reg.lastIndex = 0;
+      matched = reg.test(c.url);
+    }
+    if (matched && c.excludeRegex) {
+      let ex;
+      try { ex = new RegExp(c.excludeRegex); }
+      catch (e) { showError('Invalid exclude regex: ' + e.message); return; }
+      ex.lastIndex = 0;
+      excluded = ex.test(c.url);
+    }
+
+    if (!matched || excluded) {
+      badge.innerHTML = excluded
+        ? '<span class="badge skip">⊘ Excluded</span>'
+        : '<span class="badge no">✗ No match</span>';
+      badge.title = '';
+      groups.textContent = 'The rule would NOT fire on this URL (filter result, same as HE).';
+      return;
+    }
+    badge.innerHTML = '<span class="badge ok">✓ Matched</span>';
+
+    // capture groups of the filter regex — informational only, HE discards them
+    if (c.matchRegex) {
+      const fm = new RegExp(c.matchRegex).exec(c.url);
+      if (fm && fm.length > 1)
+        groups.textContent = 'filter groups: ' + JSON.stringify(fm.slice(1)) + '  (info only — HE does not pass these to the function)';
+    }
+
+    // 2. compile — identical to rule-utils.ts
+    let fn;
+    try { fn = new Function('val', 'detail', 'util', c.code); }
+    catch (e) { showError('Syntax error in function: ' + e.message); return; }
+
+    const detail = buildDetail(c);
+    window.console = fakeConsole;
+    try {
+      if (c.ruleType === 'redirect' || c.ruleType === 'cancel') {
+        // getRedirectUrl(): _func(redirectTo, detail, util) — val IS the URL
+        const r = fn(c.url, detail, util);
+        redirectOut.classList.remove('hidden');
+        if (r === '_header_editor_cancel_') {
+          redirectOut.className = 'redirect-result cancel';
+          redirectOut.textContent = '✗ request CANCELLED (_header_editor_cancel_)';
+        } else if (typeof r === 'string' && r !== c.url) {
+          redirectOut.className = 'redirect-result ok';
+          redirectOut.textContent = '→ ' + r;
+        } else if (typeof r === 'string') {
+          redirectOut.className = 'redirect-result same';
+          redirectOut.textContent = '→ ' + r + '  (unchanged — returned the same URL)';
+        } else {
+          redirectOut.className = 'redirect-result same';
+          redirectOut.textContent = '→ no return value: redirect unchanged';
+        }
+      } else {
+        // modifyHeaders(): _func(headers, detail, util) — mutate val in place
+        const before = new Map(parseHeaders(c.headers).map(h => [h.name, h.value]));
+        const headers = parseHeaders(c.headers);
+        fn(headers, detail, util);
+        const after = new Map(headers.map(h => [h.name, h.value]));
+        let rows = '', changes = 0;
+        for (const [k, v] of after) {
+          if (!before.has(k)) { rows += '<tr class="add"><td>+ ' + k + '</td><td></td><td>' + v + '</td></tr>'; changes++; }
+          else if (before.get(k) !== v) { rows += '<tr class="mod"><td>~ ' + k + '</td><td class="old">' + before.get(k) + '</td><td class="new">' + v + '</td></tr>'; changes++; }
+        }
+        for (const k of before.keys())
+          if (!after.has(k)) { rows += '<tr class="del"><td>- ' + k + '</td><td class="old">' + before.get(k) + '</td><td>removed</td></tr>'; changes++; }
+        headersOut.innerHTML = rows
+          ? '<table><tr><th>header</th><th>before</th><th>after</th></tr>' + rows + '</table>' +
+            '<p class="tooltip-note">' + changes + ' change' + (changes > 1 ? 's' : '') + ' applied</p>'
+          : '<p class="tooltip-note">No header changes.</p>';
+      }
+    } catch (e) {
+      showError('Runtime error in function: ' + e.message);
+    } finally {
+      window.console = realConsole;
+    }
+
+    if (logs.length) {
+      consoleEl.innerHTML = logs.map(l =>
+        '<div class="l-' + l.level + '">' + l.level + ': ' + l.text.replace(/</g, '&lt;') + '</div>').join('');
+    }
+  };
+
+  // ---- persistence / sharing ----
+  const save = () => { try { localStorage.setItem('he-debug', JSON.stringify(getCfg())); } catch {} };
+  const load = () => {
+    if (location.hash.length > 1) {
+      try { setCfg(JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(1)))))); return; } catch {}
+    }
+    try {
+      const saved = localStorage.getItem('he-debug');
+      if (saved) { setCfg(JSON.parse(saved)); return; }
+    } catch {}
+    setCfg(DEFAULTS);
+  };
+
+  // ---- wire up ----
+  load();
+  $('#preset').addEventListener('change', e => {
+    if (PRESETS[e.target.value]) { setCfg(PRESETS[e.target.value]); run(); }
+    e.target.value = '';
+  });
+  document.querySelector('.card').addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => { save(); run(); }, 500);
+  });
+  $('#run').addEventListener('click', () => { save(); run(); });
+  $('#reset').addEventListener('click', () => {
+    localStorage.removeItem('he-debug'); history.replaceState(null, '', location.pathname);
+    setCfg(DEFAULTS); run();
+  });
+  $('#share').addEventListener('click', () => {
+    const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(getCfg()))));
+    const link = location.origin === 'null'
+      ? location.href.split('#')[0] + '#' + b64  // file:// or sandboxed origin
+      : location.origin + location.pathname + '#' + b64;
+    const ok = () => {
+      $('#share').textContent = 'Link copied ✓';
+      setTimeout(() => $('#share').textContent = 'Copy shareable link', 1500);
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(link).then(ok, () => fallbackCopy(link, ok));
+    } else {
+      fallbackCopy(link, ok);
+    }
+  });
+  function fallbackCopy(text, ok) {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); ok(); } catch { window.prompt('Copy this link:', text); }
+    ta.remove();
+  }
+  run();
+})();
+</script>
+</body>
+</html>
